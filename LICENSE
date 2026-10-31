@@ -19,9 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Ratingmator includes ExifTool by Phil Harvey, in Ratingmator/ExifTool.bundle.
-ExifTool is free software under the same terms as Perl itself (either the Perl
-Artistic License or the GPL). See Ratingmator/ExifTool.bundle/README.
