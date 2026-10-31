@@ -4,7 +4,7 @@ Keeps Photomator's star ratings and flags reliable across Macs, drives, folder m
 
 Photomator shows ratings from a hidden list that doesn't travel with your photos, and loses entries when a folder moves or leaves the sidebar. Its copies in the files are often fine, but it reads them back only now and then. For RAW+JPEG pairs it writes the rating to the JPG and may read it back from the RAW's sidecar.
 
-Ratingmator treats your files as the source of truth.
+Ratingmator fixes missing ratings in Photomator from the metadata stored in the jpg's or sidecars. For raw+jpg pictures, it can copy the rating and flag Photomator stores in the jpg, to the raw's side car, so that the rating is readable in Bridge or Lightroom. The other way works as well, ratings in the raw's side car (written in bridge or lightroom) can get copied to the jpgs.
 
 - **Save ratings to photos** gives the JPG and RAW of each photo the same rating.
 - **Load ratings into Photomator** does the same, then updates Photomator from the photos in its sidebar folders.
