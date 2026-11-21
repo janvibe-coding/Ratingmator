@@ -7,6 +7,7 @@ enum Screen: Equatable {
     case photomatorOpen
     case start
     case chooseSave
+    case chooseLoad
     case working
     case summary
     case applying
@@ -30,6 +31,10 @@ final class AppModel: ObservableObject {
     // Save: choose
     @Published var droppedFolders: [URL] = []
 
+    // Load: the sidebar folders to choose from, and the folders this Load covers
+    @Published private(set) var sidebarFolders: [PickableFolder] = []
+    @Published private(set) var loadedFolders: [URL] = []
+
     // Scan
     @Published private(set) var scanned = 0
     private var scanTask: Task<Void, Never>?
@@ -43,11 +48,21 @@ final class AppModel: ObservableObject {
     @Published var settings = ConflictSettings() {
         didSet { recalculate() }
     }
+    @Published var writeSettings = WriteSettings() {
+        didSet { applyWriteSettings() }
+    }
+    /// The decisions before the write choices: those choices change no value, tree or list entry,
+    /// so a click in the Changes section only has to mark writes again.
+    private var undecidedWrites: Determination?
     @Published private(set) var conflictFolders: [ConflictType: [FolderNode<Int>]] = [:]
+    @Published private(set) var writeFolders: [WriteKind: [FolderNode<Int>]] = [:]
     @Published private(set) var folderRatings: [FolderNode<RatingTable.Row>] = []
-    /// The conflict type the separate window shows, and its folders if it doesn't show them all.
-    @Published var windowConflict: ConflictType?
-    @Published var windowFolders: Set<String>?
+    /// What the separate window shows: a conflict type or a kind of write, and its folders if not all.
+    /// Only its rows are kept; the window builds just the page it shows.
+    @Published private(set) var windowConflict: ConflictType?
+    @Published private(set) var windowWrite: WriteKind?
+    @Published private(set) var windowFolders: Set<String>?
+    @Published private(set) var windowPhotos: [PhotoDecision] = []
 
     // Apply and result
     @Published private(set) var applied = 0
@@ -114,9 +129,14 @@ final class AppModel: ObservableObject {
         listChanges = ListChanges()
         listUpdatedPhotos = 0
         settings = ConflictSettings()
+        writeSettings = WriteSettings()
         windowConflict = nil
+        windowWrite = nil
         windowFolders = nil
+        windowPhotos = []
         conflictFolders = [:]
+        writeFolders = [:]
+        loadedFolders = []
         folderRatings = []
         droppedFolders = []
         resultLines = []
@@ -158,23 +178,48 @@ final class AppModel: ObservableObject {
         startScan(folders: droppedFolders, returnTo: .chooseSave)
     }
 
-    /// Load has no folder choice: the sidebar folders that are connected (SPEC 4.3).
+    /// Load scans the sidebar folders that are connected (SPEC 4.3), or only the folders chosen.
     func startLoad() {
         flow = .load
+        guard let loaded = readList() else { return }
+        let folders = loaded.sidebarFolders
+            .filter { FileManager.default.fileExists(atPath: $0) }
+            .sorted()
+            .map { URL(fileURLWithPath: $0) }
+        guard !folders.isEmpty else {
+            message = "None of Photomator's sidebar folders is connected."
+            return
+        }
+        loadedFolders = []
+        startScan(folders: folders, returnTo: .start)
+    }
+
+    func chooseLoadFolders() {
+        flow = .load
+        guard let loaded = readList() else { return }
+        sidebarFolders = loaded.sidebarFolders.sorted().map { path in
+            PickableFolder(url: URL(fileURLWithPath: path), isConnected: FileManager.default.fileExists(atPath: path))
+        }
+        screen = .chooseLoad
+    }
+
+    var chosenLoadFolders: [URL] { sidebarFolders.flatMap(\.selectedFolders) }
+
+    func scanChosenFolders() {
+        let folders = chosenLoadFolders
+        guard !folders.isEmpty else { return }
+        loadedFolders = folders
+        startScan(folders: folders, returnTo: .chooseLoad)
+    }
+
+    private func readList() -> PhotomatorList? {
         do {
             let loaded = try PhotomatorList(contentsOf: AppPaths.list)
             list = loaded
-            let folders = loaded.sidebarFolders
-                .filter { FileManager.default.fileExists(atPath: $0) }
-                .sorted()
-                .map { URL(fileURLWithPath: $0) }
-            guard !folders.isEmpty else {
-                message = "None of Photomator's sidebar folders is connected."
-                return
-            }
-            startScan(folders: folders, returnTo: .start)
+            return loaded
         } catch {
             message = "Photomator's ratings can't be read: \(error)"
+            return nil
         }
     }
 
@@ -200,6 +245,7 @@ final class AppModel: ObservableObject {
                 }
                 self.scan = result
                 self.folderRatings = SummaryTrees.ratings(in: result)
+                self.writeSettings = WriteSettings()
                 self.settings = ConflictSettings()
                 self.screen = .summary
             } catch is CancellationError {
@@ -220,16 +266,31 @@ final class AppModel: ObservableObject {
     private func recalculate() {
         guard let scan else {
             determination = nil
+            undecidedWrites = nil
             return
         }
         let result = Determiner.determine(scan, settings: settings)
-        determination = result
+        undecidedWrites = result
         conflictFolders = SummaryTrees.conflicts(in: result, scan: scan)
+        writeFolders = SummaryTrees.writes(in: result, scan: scan)
+        applyWriteSettings()
         if flow == .load, let list {
             let decisions = result.decisions
             listChanges = ListWriter.plan(Self.forList(decisions), list: list).changes
             listUpdatedPhotos = ListText.photosToUpdate(decisions, list: list)
         }
+    }
+
+    private func applyWriteSettings() {
+        guard let base = undecidedWrites else {
+            determination = nil
+            return
+        }
+        let writes = writeSettings
+        determination = Determination(folders: base.folders.map { folder in
+            FolderDecisions(folder: folder.folder, decisions: folder.decisions.map(writes.apply))
+        })
+        refreshWindow()
     }
 
     /// The list holds the final value, and a field no file holds counts as unrated: the file wins.
@@ -241,6 +302,7 @@ final class AppModel: ObservableObject {
                 changesSidecar: decision.changesSidecar, isSkipped: decision.isSkipped
             )
             copy.isIgnored = decision.isIgnored
+            copy.isWriteSkipped = decision.isWriteSkipped
             return copy
         }
     }
@@ -253,6 +315,36 @@ final class AppModel: ObservableObject {
     func conflicts(of type: ConflictType, in folders: Set<String>? = nil) -> [PhotoDecision] {
         (determination?.decisions ?? []).filter {
             $0.conflict == type && (folders == nil || folders!.contains($0.photo.folderPath))
+        }
+    }
+
+    func showConflicts(_ type: ConflictType, in folders: Set<String>?) {
+        windowConflict = type
+        windowWrite = nil
+        windowFolders = folders
+        refreshWindow()
+    }
+
+    func showWrites(_ kind: WriteKind, in folders: Set<String>?) {
+        windowWrite = kind
+        windowConflict = nil
+        windowFolders = folders
+        refreshWindow()
+    }
+
+    /// The window's rows, kept up to date with the choices. Built once per change, not per page.
+    private func refreshWindow() {
+        let all = determination?.decisions ?? []
+        let folders = windowFolders
+        func inFolders(_ decision: PhotoDecision) -> Bool {
+            folders == nil || folders!.contains(decision.photo.folderPath)
+        }
+        if let type = windowConflict {
+            windowPhotos = all.filter { $0.conflict == type && inFolders($0) }
+        } else if let kind = windowWrite {
+            windowPhotos = all.filter { $0.writeKind == kind && inFolders($0) }
+        } else {
+            windowPhotos = []
         }
     }
 
@@ -292,6 +384,9 @@ final class AppModel: ObservableObject {
 
     private func finish(listChanges: ListChanges?, written: WriteResult) {
         var lines: [String] = []
+        if flow == .load, !loadedFolders.isEmpty {
+            lines.append("Loaded: " + loadedFolders.map(\.lastPathComponent).joined(separator: ", "))
+        }
         if written.imagesWritten + written.sidecarsWritten + written.sidecarsCreated > 0 {
             let toRaws = written.sidecarsWritten + written.sidecarsCreated
             lines.append("Copied: \(toRaws) ratings to RAWs, \(written.imagesWritten) to JPGs.")

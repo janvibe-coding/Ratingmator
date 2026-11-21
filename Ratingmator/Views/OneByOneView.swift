@@ -2,7 +2,8 @@ import AppKit
 import ImageIO
 import SwiftUI
 
-/// The photos of one conflict type, a page at a time (SPEC 4.5). Choices are kept in the summary.
+/// The photos of one conflict type or one kind of write, a page at a time (SPEC 4.5). Choices are kept
+/// in the summary. Only the rows on the page are built, so tens of thousands of photos stay quick.
 /// A page holds as many rows as fit the window, so there's nothing to scroll past.
 struct ConflictsWindow: View {
     @EnvironmentObject private var model: AppModel
@@ -10,21 +11,29 @@ struct ConflictsWindow: View {
 
     private let rowHeight: CGFloat = 84
 
-    private var photos: [PhotoDecision] {
-        model.windowConflict.map { model.conflicts(of: $0, in: model.windowFolders) } ?? []
+    private var photos: [PhotoDecision] { model.windowPhotos }
+
+    private var title: String {
+        model.windowConflict?.title ?? model.windowWrite?.title ?? ""
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("\(photos.count) \(photos.count == 1 ? "photo" : "photos"): \(model.windowConflict?.title ?? "")")
+            Text("\(photos.count.formatted()) \(photos.count == 1 ? "photo" : "photos"): \(title)")
                 .bold()
             GeometryReader { geometry in
                 let pageSize = max(1, Int(geometry.size.height / rowHeight))
                 let start = min(first, max(0, photos.count - 1))
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(photos.dropFirst(start).prefix(pageSize), id: \.photo.listKey) { decision in
-                        ConflictRow(decision: decision)
-                            .frame(height: rowHeight - 1, alignment: .leading)
+                        Group {
+                            if model.windowWrite != nil {
+                                WriteRow(decision: decision)
+                            } else {
+                                ConflictRow(decision: decision)
+                            }
+                        }
+                        .frame(height: rowHeight - 1, alignment: .leading)
                         Divider()
                     }
                     Spacer(minLength: 0)
@@ -50,6 +59,7 @@ struct ConflictsWindow: View {
         .padding(16)
         .frame(minWidth: 860, minHeight: 520)
         .onChange(of: model.windowConflict) { _ in first = 0 }
+        .onChange(of: model.windowWrite) { _ in first = 0 }
         .onChange(of: model.windowFolders) { _ in first = 0 }
     }
 
@@ -142,6 +152,54 @@ struct ConflictRow: View {
                 }
                 .labelsHidden()
                 .frame(width: 90)
+            }
+        }
+        .monospacedDigit()
+    }
+}
+
+/// One planned write: the photo, what its JPG and RAW hold now and will hold, and a switch to write it.
+struct WriteRow: View {
+    @EnvironmentObject private var model: AppModel
+    let decision: PhotoDecision
+
+    private var key: String { decision.photo.listKey }
+
+    private var final: PhotoValue {
+        PhotoValue(stars: decision.value.stars ?? 0, flag: decision.value.flag ?? Flag.none)
+    }
+
+    private func change(_ name: String, _ before: PhotoValue?, writes: Bool) -> String {
+        let now = ValueText.describe(before ?? .empty)
+        return writes ? "\(name): \(now) → \(ValueText.describe(final))" : "\(name): \(now)"
+    }
+
+    private var write: Binding<Bool> {
+        Binding(
+            get: { !model.writeSettings.skipped.contains(key) },
+            set: { on in
+                if on { model.writeSettings.skipped.remove(key) } else { model.writeSettings.skipped.insert(key) }
+            }
+        )
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Thumbnail(url: decision.photo.imageURL ?? decision.photo.rawURL)
+                .frame(width: 96, height: 72)
+            Text(URL(fileURLWithPath: key).deletingPathExtension().lastPathComponent)
+                .frame(width: 180, alignment: .leading)
+            if decision.sources.jpg != nil {
+                Text(change("JPG", decision.sources.jpg, writes: decision.changesImage))
+                    .frame(width: 210, alignment: .leading)
+            }
+            if decision.sources.raw != nil {
+                Text(change("RAW", decision.sources.raw, writes: decision.changesSidecar))
+                    .frame(width: 210, alignment: .leading)
+            }
+            Spacer()
+            if decision.writeKind?.hasOwnChoice == true {
+                Toggle("Write", isOn: write)
             }
         }
         .monospacedDigit()

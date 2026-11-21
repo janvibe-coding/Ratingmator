@@ -18,6 +18,7 @@ struct SummaryView: View {
                         }
                     }
                     ConflictsView()
+                    ChangesView()
                     if model.flow == .load {
                         ListSection()
                     }
@@ -240,8 +241,7 @@ private struct ConflictSection: View {
     private var allPaths: [String] { folders.flatMap(\.paths) }
 
     private func openPhotos(in folders: Set<String>?) {
-        model.windowConflict = type
-        model.windowFolders = folders
+        model.showConflicts(type, in: folders)
         openWindow(id: "conflicts")
     }
 
@@ -340,6 +340,146 @@ private struct ConflictFolderRow: View {
     }
 }
 
+/// The file writes the button will make, one line per kind (SPEC 4.5). Only counts here: the photos
+/// themselves are listed in the separate window, a page at a time.
+private struct ChangesView: View {
+    @EnvironmentObject private var model: AppModel
+
+    private var counts: [WriteKind: Int] { model.determination?.counts.writes ?? [:] }
+
+    var body: some View {
+        if !counts.isEmpty {
+            VStack(alignment: .leading, spacing: 14) {
+                Divider()
+                Text("Changes").font(.headline)
+                ForEach(WriteKind.allCases.filter { counts[$0] != nil }, id: \.self) { kind in
+                    ChangeSection(kind: kind, count: counts[kind] ?? 0)
+                }
+            }
+        }
+    }
+}
+
+private struct WriteChoiceOptions: View {
+    var body: some View {
+        Text("Write").tag(WriteChoice?.some(.write))
+        Text("Ignore").tag(WriteChoice?.some(.ignore))
+        Text("Decide one by one").tag(WriteChoice?.some(.oneByOne))
+    }
+}
+
+private struct ChangeSection: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.openWindow) private var openWindow
+    @State private var isExpanded = false
+    @State private var expanded: Set<String> = []
+    let kind: WriteKind
+    let count: Int
+
+    private var folders: [FolderNode<Int>] { model.writeFolders[kind] ?? [] }
+    private var allPaths: [String] { folders.flatMap(\.paths) }
+
+    private func openPhotos(in folders: Set<String>?) {
+        model.showWrites(kind, in: folders)
+        openWindow(id: "conflicts")
+    }
+
+    private var overall: Binding<WriteChoice?> {
+        Binding(
+            get: { model.writeSettings.overall(for: kind, folders: allPaths) },
+            set: {
+                guard let choice = $0 else { return }
+                model.writeSettings.setAll(kind, to: choice)
+                if choice == .oneByOne { openPhotos(in: nil) }
+            }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "pencil")
+                Text("\(count)").bold().monospacedDigit()
+                Text(kind.title)
+                Spacer()
+                if kind.hasOwnChoice {
+                    if overall.wrappedValue == .oneByOne {
+                        Button("Open") { openPhotos(in: nil) }
+                    }
+                    Picker("", selection: overall) {
+                        if overall.wrappedValue == nil {
+                            Text("Mixed").tag(WriteChoice?.none)
+                        }
+                        WriteChoiceOptions()
+                    }
+                    .labelsHidden()
+                    .frame(width: 200)
+                } else {
+                    Button("Show photos") { openPhotos(in: nil) }
+                }
+            }
+
+            if kind.hasOwnChoice {
+                DisclosureGroup("Per folder", isExpanded: $isExpanded) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        let rows = TreeRows(nodes: folders, expanded: expanded).visible
+                        ForEach(Array(rows.enumerated()), id: \.element.node.path) { index, item in
+                            ChangeFolderRow(
+                                kind: kind, node: item.node, depth: item.depth, expanded: $expanded,
+                                open: { openPhotos(in: Set(item.node.paths)) }
+                            )
+                            .modifier(RowShade(index: index))
+                        }
+                    }
+                    .padding(.top, 6)
+                }
+            }
+        }
+    }
+}
+
+private struct ChangeFolderRow: View {
+    @EnvironmentObject private var model: AppModel
+    let kind: WriteKind
+    let node: FolderNode<Int>
+    let depth: Int
+    @Binding var expanded: Set<String>
+    let open: () -> Void
+
+    private var choice: Binding<WriteChoice?> {
+        Binding(
+            get: { model.writeSettings.overall(for: kind, folders: node.paths) },
+            set: {
+                guard let choice = $0 else { return }
+                model.writeSettings.set(kind, folders: node.paths, to: choice)
+                if choice == .oneByOne { open() }
+            }
+        )
+    }
+
+    var body: some View {
+        HStack {
+            TreeName(
+                name: node.name, depth: depth, hasChildren: !node.children.isEmpty,
+                path: node.path, expanded: $expanded
+            )
+            Text("\(node.value)").bold().monospacedDigit()
+            Spacer()
+            if choice.wrappedValue == .oneByOne {
+                Button("Open", action: open)
+            }
+            Picker("", selection: choice) {
+                if choice.wrappedValue == nil {
+                    Text("Mixed").tag(WriteChoice?.none)
+                }
+                WriteChoiceOptions()
+            }
+            .labelsHidden()
+            .frame(width: 200)
+        }
+    }
+}
+
 /// What Load will do in Photomator, and what it leaves out.
 private struct ListSection: View {
     @EnvironmentObject private var model: AppModel
@@ -363,6 +503,10 @@ private struct ListSection: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(Color.red)
                 .cornerRadius(8)
+            }
+            if let skipped = model.determination?.counts.writesSkipped, skipped > 0 {
+                Label(ListText.skippedWritesWarning(skipped), systemImage: "exclamationmark.triangle")
+                    .foregroundColor(.orange)
             }
             if model.listUpdatedPhotos > 0 {
                 Text(ListText.willUpdate(model.listUpdatedPhotos))

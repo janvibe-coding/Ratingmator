@@ -33,7 +33,7 @@ nonisolated enum FileWriter {
 
         var done = 0
         for decision in decisions where !decision.isLeftAlone {
-            if decision.changesImage, let image = decision.photo.imageURL {
+            if decision.writesImage, let image = decision.photo.imageURL {
                 if let failure = write(decision.value, into: image, exifTool: exifTool) {
                     result.failures.append(failure)
                 } else {
@@ -42,7 +42,7 @@ nonisolated enum FileWriter {
                 done += 1
                 onProgress(done)
             }
-            if decision.changesSidecar, let raw = decision.photo.rawURL {
+            if decision.writesSidecar, let raw = decision.photo.rawURL {
                 let failure: WriteFailure?
                 if let sidecar = decision.photo.sidecarURL {
                     failure = write(decision.value, into: sidecar, exifTool: exifTool)
@@ -181,7 +181,7 @@ nonisolated enum FileWriter {
     /// Returns nil if there's nothing to back up.
     private static func backUpSidecars(of decisions: [PhotoDecision], to folder: URL) throws -> URL? {
         let sidecars = decisions.compactMap { decision -> URL? in
-            !decision.isLeftAlone && decision.changesSidecar ? decision.photo.sidecarURL : nil
+            !decision.isLeftAlone && decision.writesSidecar ? decision.photo.sidecarURL : nil
         }
         guard !sidecars.isEmpty else { return nil }
 

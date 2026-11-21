@@ -145,6 +145,15 @@ struct ListPlanTests {
         #expect(plan.changes.isEmpty)
     }
 
+    /// Ignoring a file write still updates the list: the photo's value is known, only its RAW isn't written.
+    @Test func aPhotoWhoseWritesAreSkippedStillGetsItsListValue() {
+        var decision = jpg("/photos/a.JPG", PhotoValue(stars: 3, flag: .pick))
+        decision.isWriteSkipped = true
+        let plan = ListWriter.plan([decision], list: list())
+        #expect(plan.ratings == ["/photos/a.JPG": 3])
+        #expect(plan.flags == ["/photos/a.JPG": 1])
+    }
+
     @Test func aSkippedPhotoStays() {
         let plan = ListWriter.plan(
             [jpg("/photos/a.JPG", PhotoValue(stars: 0, flag: nil), skipped: true)],

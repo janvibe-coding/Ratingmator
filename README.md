@@ -7,8 +7,10 @@ Photomator shows ratings from a hidden list that doesn't travel with your photos
 Ratingmator fixes missing ratings in Photomator from the metadata stored in the jpg's or sidecars. For raw+jpg pictures, it can copy the rating and flag Photomator stores in the jpg, to the raw's side car, so that the rating is readable in Bridge or Lightroom. The other way works as well, ratings in the raw's side car (written in bridge or lightroom) can get copied to the jpgs.
 
 - **Save ratings to photos** gives the JPG and RAW of each photo the same rating.
-- **Load ratings into Photomator** does the same, then updates Photomator.
+- **Load ratings into Photomator** does the same, then updates Photomator. **Choose folders…** loads only the folders you tick.
 - **Restore earlier Photomator ratings** puts back an earlier version.
+
+Before anything is written, the summary shows what it found per folder, every conflict between a JPG and its RAW, and every file it will change. You can decide each of them, or skip them.
 
 
 ## Install

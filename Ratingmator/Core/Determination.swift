@@ -70,6 +70,73 @@ nonisolated struct ConflictType: Hashable, Sendable {
     }
 }
 
+/// The kinds of file write the Changes section shows, one line each.
+nonisolated enum WriteKind: Int, CaseIterable, Hashable, Sendable {
+    case rawFromJpg, other, fromConflict
+
+    var title: String {
+        switch self {
+        case .rawFromJpg: "RAW gets the JPG's rating"
+        case .other: "Other changes"
+        case .fromConflict: "Follow the conflict choices above"
+        }
+    }
+
+    /// Writes that follow a conflict's choice get no box of their own: the conflict's box decides them.
+    var hasOwnChoice: Bool { self != .fromConflict }
+}
+
+nonisolated enum WriteChoice: Hashable, Sendable {
+    case write, ignore, oneByOne
+}
+
+/// The choices in the Changes section: per kind, per folder, and per photo when deciding one by one.
+nonisolated struct WriteSettings: Equatable, Sendable {
+    private struct FolderKey: Hashable, Sendable {
+        let kind: WriteKind
+        let folder: String
+    }
+
+    var choices: [WriteKind: WriteChoice] = [:]
+    /// Photos switched off in the one-by-one window, by list key.
+    var skipped: Set<String> = []
+    private var folderChoices: [FolderKey: WriteChoice] = [:]
+
+    func choice(for kind: WriteKind, folder: String) -> WriteChoice {
+        folderChoices[FolderKey(kind: kind, folder: folder)] ?? choices[kind] ?? .write
+    }
+
+    /// The choice these folders share. nil when they differ.
+    func overall(for kind: WriteKind, folders: [String]) -> WriteChoice? {
+        let found = Set(folders.map { choice(for: kind, folder: $0) })
+        if found.isEmpty { return choices[kind] ?? .write }
+        return found.count == 1 ? found.first : nil
+    }
+
+    mutating func set(_ kind: WriteKind, folders: [String], to choice: WriteChoice) {
+        for folder in folders { folderChoices[FolderKey(kind: kind, folder: folder)] = choice }
+    }
+
+    mutating func setAll(_ kind: WriteKind, to choice: WriteChoice) {
+        choices[kind] = choice
+        folderChoices = folderChoices.filter { $0.key.kind != kind }
+    }
+
+    /// Marks a decision's file writes as skipped where the choice says so. Its value stays, for the list.
+    func apply(to decision: PhotoDecision) -> PhotoDecision {
+        guard let kind = decision.writeKind, kind.hasOwnChoice else { return decision }
+        let skip: Bool
+        switch choice(for: kind, folder: decision.photo.folderPath) {
+        case .write: skip = false
+        case .ignore: skip = true
+        case .oneByOne: skip = skipped.contains(decision.photo.listKey)
+        }
+        var result = decision
+        result.isWriteSkipped = skip
+        return result
+    }
+}
+
 /// The choice for all photos of a conflict type. Ignore leaves those photos as they are.
 nonisolated enum ConflictChoice: CaseIterable, Hashable, Sendable {
     case ignore, oneByOne, jpgWins, rawWins, highest, lowest
@@ -165,9 +232,25 @@ nonisolated struct PhotoDecision: Equatable, Sendable {
     let isSkipped: Bool
     /// A conflict set to ignore: the photo is left alone.
     var isIgnored = false
+    /// The file writes were set to ignore in the Changes section: the files are left as they are,
+    /// and the list still gets the value.
+    var isWriteSkipped = false
 
     var createsSidecar: Bool { changesSidecar && photo.sidecarURL == nil }
     var isLeftAlone: Bool { isSkipped || isIgnored }
+
+    /// What will really be written: changesImage and changesSidecar say what's planned.
+    var writesImage: Bool { changesImage && !isWriteSkipped }
+    var writesSidecar: Bool { changesSidecar && !isWriteSkipped }
+    var writesNewSidecar: Bool { writesSidecar && photo.sidecarURL == nil }
+
+    /// The kind of file write this photo has planned, for the Changes section. nil if none.
+    var writeKind: WriteKind? {
+        guard !isLeftAlone, changesImage || changesSidecar else { return nil }
+        if conflict != nil { return .fromConflict }
+        if changesSidecar, !changesImage { return .rawFromJpg }
+        return .other
+    }
 
     /// As the list should hold it: a field no file holds counts as unrated or unflagged, since the file wins.
     var valueForList: PhotoValue {
@@ -179,6 +262,9 @@ nonisolated struct PhotoDecision: Equatable, Sendable {
 nonisolated struct DecisionCounts: Equatable, Sendable {
     var conflicts: [ConflictType: Int] = [:]
     var ignored = 0
+    /// Planned file writes per kind, skipped ones included.
+    var writes: [WriteKind: Int] = [:]
+    var writesSkipped = 0
     var jpgsToRaws = 0
     var rawsToJpgs = 0
     var sidecarsToCreate = 0
@@ -192,9 +278,11 @@ nonisolated struct DecisionCounts: Equatable, Sendable {
         for decision in decisions {
             if let conflict = decision.conflict { conflicts[conflict, default: 0] += 1 }
             if decision.isIgnored { ignored += 1 }
-            if decision.changesSidecar { jpgsToRaws += 1 }
-            if decision.changesImage { rawsToJpgs += 1 }
-            if decision.createsSidecar { sidecarsToCreate += 1 }
+            if let kind = decision.writeKind { writes[kind, default: 0] += 1 }
+            if decision.isWriteSkipped, decision.writeKind != nil { writesSkipped += 1 }
+            if decision.writesSidecar { jpgsToRaws += 1 }
+            if decision.writesImage { rawsToJpgs += 1 }
+            if decision.writesNewSidecar { sidecarsToCreate += 1 }
             if decision.isSkipped { skipped += 1 }
         }
     }
@@ -216,9 +304,13 @@ nonisolated struct Determination: Equatable, Sendable {
 
 /// Works out each photo's value, separately for stars and flag (SPEC 5).
 nonisolated enum Determiner {
-    static func determine(_ scan: ScanResult, settings: ConflictSettings = ConflictSettings()) -> Determination {
+    static func determine(
+        _ scan: ScanResult, settings: ConflictSettings = ConflictSettings(), writes: WriteSettings = WriteSettings()
+    ) -> Determination {
         Determination(folders: scan.folders.map { folder in
-            FolderDecisions(folder: folder.folder, decisions: folder.photos.map { decide($0, settings: settings) })
+            FolderDecisions(folder: folder.folder, decisions: folder.photos.map {
+                writes.apply(to: decide($0, settings: settings))
+            })
         })
     }
 
@@ -460,6 +552,16 @@ nonisolated enum SummaryTrees {
         return FolderTree.build(rows, roots: scan.folders.map(\.folder), zero: RatingTable.Row(), add: +)
     }
 
+    /// For each kind of file write, the folders that have it, with their counts.
+    static func writes(in determination: Determination, scan: ScanResult) -> [WriteKind: [FolderNode<Int>]] {
+        var counts: [WriteKind: [String: Int]] = [:]
+        for decision in determination.decisions {
+            guard let kind = decision.writeKind else { continue }
+            counts[kind, default: [:]][decision.photo.folderPath, default: 0] += 1
+        }
+        return counts.mapValues { FolderTree.build($0, roots: scan.folders.map(\.folder), zero: 0, add: +) }
+    }
+
     /// For each kind of conflict, the folders that have it, with their counts.
     static func conflicts(in determination: Determination, scan: ScanResult) -> [ConflictType: [FolderNode<Int>]] {
         var counts: [ConflictType: [String: Int]] = [:]
@@ -511,6 +613,12 @@ nonisolated enum ListText {
             let photos = decision.valueForList
             return (listValue.stars ?? 0) != photos.stars || (listValue.flag ?? Flag.none) != photos.flag
         }.count
+    }
+
+    static func skippedWritesWarning(_ count: Int) -> String {
+        count == 1
+            ? "1 RAW will not get its JPG's rating."
+            : "\(count.formatted()) RAWs will not get their JPG's rating."
     }
 
     static func ignoredWarning(_ count: Int) -> String {

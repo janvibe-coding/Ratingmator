@@ -185,6 +185,21 @@ struct FileWriterTests {
         #expect(try XMPReader.value(inSidecar: folder.url.appendingPathComponent("a.xmp")).stars == 2)
     }
 
+    @Test func aWriteSetToIgnoreLeavesTheFilesAsTheyAre() throws {
+        let folder = try TemporaryFolder()
+        defer { folder.remove() }
+        let raw = try folder.write(Data(), to: "a.RAF")
+        let sidecar = try folder.write(Sample.sidecar(rating: 1), to: "a.xmp")
+        var skipped = decision(
+            Photo(kind: .rawOnly, imageURL: nil, rawURL: raw, sidecarURL: sidecar),
+            value: PhotoValue(stars: 4, flag: nil), sidecar: true
+        )
+        skipped.isWriteSkipped = true
+        let result = try FileWriter.apply([skipped], backupFolder: backupFolder(folder))
+        #expect(result == WriteResult())
+        #expect(try XMPReader.value(inSidecar: sidecar).stars == 1)
+    }
+
     @Test func aFileThatDoesNotDifferOrASkippedPhotoIsNotTouched() throws {
         let folder = try TemporaryFolder()
         defer { folder.remove() }

@@ -1,6 +1,6 @@
 # Ratingmator — Specification
 
-Version 0.8 · 31 Oct 2026 · Replaces v0.7. Based on tests run 30 Sep – 4 Oct and 31 Oct 2026 with Photomator 3.4.15.
+Version 0.9 · 21 Nov 2026 · Replaces v0.8. App version 2.0. Based on tests run 30 Sep – 4 Oct and 31 Oct 2026 with Photomator 3.4.15.
 
 ## 1. Purpose and scope
 
@@ -81,7 +81,7 @@ Ratingmator holds no ratings itself: the folders do. It has no status screen.
 1. **At launch, close Photomator.** If it's running, the app asks to quit it (section 7). Photomator stays closed while Ratingmator runs.
 2. **Start window:** two large buttons, each with one line under it, and one small button:
 - **Save ratings to photos**: Gives the JPG and RAW of each photo the same rating. (4.2)
-- **Load ratings into Photomator**: Does the same, then updates Photomator. (4.3)
+- **Load ratings into Photomator**: Does the same, then updates Photomator. (4.3) Under it, a small **Choose folders…** link to load only some folders.
 - **Restore earlier Photomator ratings** (small; greyed out while there are no backups) (4.4)
 
 ### 4.2 Save ratings to photos
@@ -95,7 +95,7 @@ Ratingmator holds no ratings itself: the folders do. It has no status screen.
 
 The list never updates the photos: the photos win.
 
-1. **Scan** the sidebar folders on this Mac whose drive is connected. There's no folder choice. Folders on a drive that isn't connected keep their list entries.
+1. **Scan** the sidebar folders on this Mac whose drive is connected. Folders on a drive that isn't connected keep their list entries. With **Choose folders…**, Photomator's sidebar shows as a tree with a checkbox per folder, at any level; only the ticked folders are scanned and written, and every other entry in the list stays as it is.
 2. **Summary** (4.5), plus one line: "The value of X photos will be updated in Photomator." A rating only in the list is removed: the file wins.
 3. A conflict may stay on Ignore, to decide it in Photomator. Nothing is written for that photo, in the files or in the list; whatever the list holds for it stays. A large warning says how many photos this is: "X photos with a conflict will not be updated in Photomator."
 4. **Apply.**
@@ -129,6 +129,7 @@ The list never updates the photos: the photos win.
 - Under each line, **Per folder**, closed by default, opens the same tree for the folders with that conflict, each with its count and own choice. A folder's choice covers everything under it. When folders differ, the box above them shows **Mixed**, and picking a value there sets them all again.
 - **Decide one by one** always opens a separate window with those photos; the main window holds no photo rows. An **Open** button next to the box reopens it. The window has pages and no scrollbar: a page holds as many rows as fit, and the arrow keys or Previous and Next move between pages.
 - In that window, each row has a thumbnail (the JPG, or the RAW's embedded preview when there's no JPG), the name, the rating and flag of the JPG and the RAW, and the options **JPG**, **RAW** or **New**: set stars 0–5 and pick / reject / no flag by hand. Preselected: the source with the highest rating.
+- Below the conflicts, **Changes** lists the file writes the button will make, one line per kind with its count: the RAW gets the JPG's rating, and other changes. Whether the RAW already has a sidecar file isn't shown: it means nothing to the user. The choices: **Write** (the default), **Ignore** and **Decide one by one**, per line and **Per folder** in the same tree. One by one opens the same paged window, with per photo its thumbnail, the value of JPG and RAW before and after, and a **Write** switch. Writes that follow a conflict's choice show as a line too, but the conflict's box decides them. An ignored write leaves the files as they are; in Load, the list still gets the photo's value, and a line says how many RAWs won't get their JPG's rating. Only the rows on the page are built, so tens of thousands of photos stay quick.
 - Nothing is written until the action button is pressed. Its text says what will happen and updates with the choices, such as "Copy rating of 35 JPGs to their RAW". With nothing to do it reads "Nothing to change" and is greyed out.
 
 ### 4.6 Backups

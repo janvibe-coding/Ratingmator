@@ -303,6 +303,7 @@ struct WhatChangesTests {
         var first = DecisionCounts()
         first.conflicts[rawOnly] = 1
         first.ignored = 1
+        first.writes[.rawFromJpg] = 1
         first.jpgsToRaws = 1
         first.sidecarsToCreate = 1
         #expect(result.folders[0].counts == first)
@@ -531,5 +532,106 @@ struct ListTextTests {
     @Test func theTextSaysHowMany() {
         #expect(ListText.willUpdate(1) == "The value of 1 photo will be updated in Photomator.")
         #expect(ListText.willUpdate(10) == "The value of 10 photos will be updated in Photomator.")
+    }
+}
+
+struct WriteChoiceTests {
+    private func photo(_ folder: String, jpg: PhotoValue, raw: PhotoValue?) -> ScannedPhoto {
+        ScannedPhoto(
+            photo: Photo(
+                kind: .pair,
+                imageURL: URL(fileURLWithPath: "\(folder)/a.JPG"),
+                rawURL: URL(fileURLWithPath: "\(folder)/a.RAF"),
+                sidecarURL: raw == nil ? nil : URL(fileURLWithPath: "\(folder)/a.xmp")
+            ),
+            image: .value(jpg),
+            sidecar: raw.map { .value($0) } ?? .absent
+        )
+    }
+
+    private let winter = "/photos/2026/winter 26"
+    private let zomer = "/photos/2026/zomer 26"
+
+    private func scan(_ photos: [ScannedPhoto]) -> ScanResult {
+        ScanResult(folders: [FolderScan(folder: URL(fileURLWithPath: "/photos"), photos: photos, unreadableFolders: [])])
+    }
+
+    @Test func writesAreSortedByKind() {
+        // Whether the RAW already has a sidecar file doesn't matter to the user: one kind.
+        #expect(Determiner.decide(photo(winter, jpg: stars(3), raw: nil)).writeKind == .rawFromJpg)
+        #expect(Determiner.decide(photo(winter, jpg: stars(3), raw: .empty)).writeKind == .rawFromJpg)
+        #expect(Determiner.decide(photo(winter, jpg: stars(3), raw: stars(3))).writeKind == nil)
+        let conflict = Determiner.decide(photo(winter, jpg: stars(1), raw: stars(4)))
+        #expect(conflict.writeKind == nil)
+        #expect(decide(photo(winter, jpg: stars(1), raw: stars(4)), .highest).writeKind == .fromConflict)
+    }
+
+    @Test func writeIsTheDefault() {
+        let result = Determiner.determine(scan([photo(winter, jpg: stars(3), raw: nil)]))
+        #expect(result.counts.jpgsToRaws == 1)
+        #expect(result.counts.writes[.rawFromJpg] == 1)
+        #expect(result.counts.writesSkipped == 0)
+    }
+
+    @Test func ignoreSkipsTheFileButKeepsTheValueForTheList() throws {
+        var writes = WriteSettings()
+        writes.setAll(.rawFromJpg, to: .ignore)
+        let result = Determiner.determine(scan([photo(winter, jpg: stars(3), raw: nil)]), writes: writes)
+        let decision = try #require(result.decisions.first)
+        #expect(decision.isWriteSkipped)
+        #expect(!decision.writesSidecar)
+        #expect(decision.valueForList.stars == 3)
+        #expect(result.counts.jpgsToRaws == 0)
+        #expect(result.counts.writes[.rawFromJpg] == 1)
+        #expect(result.counts.writesSkipped == 1)
+        #expect(ActionText.save(result.counts) == ("Nothing to change", false))
+    }
+
+    @Test func oneByOneWritesUnlessSwitchedOff() throws {
+        var writes = WriteSettings()
+        writes.setAll(.rawFromJpg, to: .oneByOne)
+        let item = photo(winter, jpg: stars(3), raw: .empty)
+        #expect(try #require(Determiner.determine(scan([item]), writes: writes).decisions.first).writesSidecar)
+        writes.skipped.insert(item.photo.listKey)
+        #expect(try #require(Determiner.determine(scan([item]), writes: writes).decisions.first).isWriteSkipped)
+    }
+
+    @Test func aFoldersChoiceCoversOnlyThatFolder() {
+        var writes = WriteSettings()
+        writes.set(.rawFromJpg, folders: [winter], to: .ignore)
+        let result = Determiner.determine(scan([
+            photo(winter, jpg: stars(3), raw: nil),
+            photo(zomer, jpg: stars(3), raw: nil),
+        ]), writes: writes)
+        #expect(result.counts.writesSkipped == 1)
+        #expect(result.counts.jpgsToRaws == 1)
+        #expect(writes.overall(for: .rawFromJpg, folders: [winter, zomer]) == nil)
+        writes.setAll(.rawFromJpg, to: .write)
+        #expect(writes.overall(for: .rawFromJpg, folders: [winter, zomer]) == .write)
+    }
+
+    @Test func writesThatFollowAConflictHaveNoChoiceOfTheirOwn() throws {
+        var writes = WriteSettings()
+        writes.setAll(.fromConflict, to: .ignore)
+        var conflicts = ConflictSettings()
+        let item = photo(winter, jpg: stars(1), raw: stars(4))
+        conflicts.choices[Determiner.decide(item).conflict!] = .highest
+        let decision = try #require(Determiner.determine(scan([item]), settings: conflicts, writes: writes).decisions.first)
+        #expect(decision.writesImage)
+        #expect(!WriteKind.fromConflict.hasOwnChoice)
+    }
+
+    @Test func aTreeListsTheFoldersWithEachKind() throws {
+        let result = Determiner.determine(scan([
+            photo(winter, jpg: stars(3), raw: nil),
+            photo(zomer, jpg: stars(3), raw: .empty),
+        ]))
+        let trees = SummaryTrees.writes(in: result, scan: scan([]) )
+        #expect(trees[.rawFromJpg]?.flatMap(\.paths).sorted() == [winter, zomer])
+    }
+
+    @Test func theWarningSaysHowManyRAWsAreLeftOut() {
+        #expect(ListText.skippedWritesWarning(1) == "1 RAW will not get its JPG's rating.")
+        #expect(ListText.skippedWritesWarning(2) == "2 RAWs will not get their JPG's rating.")
     }
 }

@@ -2,6 +2,75 @@ import Foundation
 import Testing
 @testable import Ratingmator
 
+@MainActor
+struct PickableFolderTests {
+    private func tree() throws -> (TemporaryFolder, PickableFolder) {
+        let folder = try TemporaryFolder()
+        try folder.write(Data(), to: "a/x/1.JPG")
+        try folder.write(Data(), to: "a/y/2.JPG")
+        try folder.write(Data(), to: "b/3.JPG")
+        try folder.write(Data(), to: ".hidden/4.JPG")
+        let node = PickableFolder(url: folder.url)
+        node.loadChildren()
+        node.children?.forEach { $0.loadChildren() }
+        return (folder, node)
+    }
+
+    @Test func subfoldersAreSortedAndHiddenOnesLeftOut() throws {
+        let (folder, node) = try tree()
+        defer { folder.remove() }
+        #expect(node.children?.map(\.name) == ["a", "b"])
+        #expect(node.children?[0].children?.map(\.name) == ["x", "y"])
+    }
+
+    @Test func aTickedFolderStandsForAllUnderIt() throws {
+        let (folder, node) = try tree()
+        defer { folder.remove() }
+        node.set(on: true)
+        #expect(node.selectedFolders == [node.url])
+        #expect(node.children?[0].children?[1].isOn == true)
+    }
+
+    @Test func unTickingASubfolderLeavesTheOthersSelected() throws {
+        let (folder, node) = try tree()
+        defer { folder.remove() }
+        node.set(on: true)
+        let a = try #require(node.children?[0])
+        let x = try #require(a.children?[0])
+        x.set(on: false)
+        #expect(!node.isOn)
+        #expect(!a.isOn)
+        #expect(node.selectedFolders.map(\.lastPathComponent) == ["y", "b"])
+    }
+
+    @Test func tickingEverySubfolderTicksTheFolder() throws {
+        let (folder, node) = try tree()
+        defer { folder.remove() }
+        let a = try #require(node.children?[0])
+        a.children?.forEach { $0.set(on: true) }
+        #expect(a.isOn)
+        #expect(node.selectedFolders.map(\.lastPathComponent) == ["a"])
+    }
+
+    @Test func aFolderOnADriveThatIsntConnectedCantBeTicked() {
+        let node = PickableFolder(url: URL(fileURLWithPath: "/Volumes/gone/photos"), isConnected: false)
+        node.set(on: true)
+        node.loadChildren()
+        #expect(!node.isOn)
+        #expect(node.selectedFolders.isEmpty)
+    }
+
+    @Test func childrenLoadedAfterTickingAreTicked() throws {
+        let folder = try TemporaryFolder()
+        defer { folder.remove() }
+        try folder.write(Data(), to: "a/1.JPG")
+        let node = PickableFolder(url: folder.url)
+        node.set(on: true)
+        node.loadChildren()
+        #expect(node.children?[0].isOn == true)
+    }
+}
+
 struct RestoreTests {
     private func validList(ratings: [String: Int], flags: [String: Int] = [:], folder: String = "file:///photos/") throws -> Data {
         try PropertyListSerialization.data(fromPropertyList: [

@@ -11,6 +11,7 @@ struct RootView: View {
             case .photomatorOpen: PhotomatorOpenView()
             case .start: StartView()
             case .chooseSave: ChooseSaveView()
+            case .chooseLoad: ChooseLoadView()
             case .working: WorkingView()
             case .summary: SummaryView()
             case .applying: ApplyingView()
@@ -75,11 +76,15 @@ struct StartView: View {
                 detail: "Gives the JPG and RAW of each photo the same rating.",
                 action: model.startSave
             )
-            startButton(
-                "Load ratings into Photomator",
-                detail: "Does the same, then updates Photomator.",
-                action: model.startLoad
-            )
+            VStack(spacing: 4) {
+                startButton(
+                    "Load ratings into Photomator",
+                    detail: "Does the same, then updates Photomator.",
+                    action: model.startLoad
+                )
+                Button("Choose folders…") { model.chooseLoadFolders() }
+                    .buttonStyle(.link)
+            }
             Button("Restore earlier Photomator ratings") { model.startRestore() }
                 .controlSize(.small)
                 .disabled(!model.hasBackups)
@@ -129,6 +134,58 @@ struct ChooseSaveView: View {
             }
         }
         .padding(20)
+    }
+}
+
+/// Load for some folders only: Photomator's sidebar as a tree, with a checkbox per folder (SPEC 4.3).
+struct ChooseLoadView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            List(model.sidebarFolders) { folder in
+                PickableFolderRow(folder: folder)
+            }
+
+            HStack {
+                Button("Back") { model.backToStart() }
+                Spacer()
+                Button("Scan") { model.scanChosenFolders() }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+    }
+}
+
+/// A folder with its checkbox, which can be expanded to its subfolders.
+struct PickableFolderRow: View {
+    @ObservedObject var folder: PickableFolder
+    @State private var isExpanded = false
+
+    var body: some View {
+        if folder.isConnected {
+            DisclosureGroup(isExpanded: $isExpanded) {
+                ForEach(folder.children ?? []) { child in
+                    PickableFolderRow(folder: child)
+                }
+            } label: {
+                checkbox
+            }
+            .onChange(of: isExpanded) { expanded in
+                if expanded { folder.loadChildren() }
+            }
+        } else {
+            checkbox
+                .disabled(true)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var checkbox: some View {
+        Toggle(folder.name, isOn: Binding(get: { folder.isOn }, set: { folder.set(on: $0) }))
+            .help(folder.url.path)
     }
 }
 
